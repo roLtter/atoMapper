@@ -203,8 +203,12 @@ def _assign_hydrogens(
             raise ValueError("hydrogen count mismatch after heavy mapping")
         cost = np.zeros((len(leftover_r), len(leftover_p)))
         for a, ri in enumerate(leftover_r):
+            r_heavies = {mapping[n] for n in _neighbors(reactant, ri) if reactant.symbols[n] != "H" and mapping[n] >= 0}
             for b, mi in enumerate(leftover_p):
-                cost[a, b] = np.linalg.norm(reactant.coords[ri] - prod_aligned[mi])
+                p_heavies = {n for n in _neighbors(product, mi) if product.symbols[n] != "H"}
+                dist = float(np.linalg.norm(reactant.coords[ri] - prod_aligned[mi]))
+                preserve = len(r_heavies & p_heavies)
+                cost[a, b] = dist + 5.0 * (len(r_heavies) - preserve)
         rows, cols = linear_sum_assignment(cost)
         for r, c in zip(rows, cols, strict=True):
             mapping[leftover_r[r]] = leftover_p[c]
@@ -217,11 +221,16 @@ def _assign_hydrogens(
 
 def _refine_mapping(reactant: Molecule, product: Molecule, mapping: list[int], rounds: int = 3) -> list[int]:
     mapping = list(mapping)
+    heavy = reactant.heavy_indices()
     for _ in range(rounds):
         Q = product.coords[np.asarray(mapping)]
         R, t, _ = kabsch(reactant.coords, Q)
         aligned_full = apply_transform(product.coords, R, t)
-        mapping = hungarian_by_element(reactant.symbols, reactant.coords, aligned_full)
+        fixed = {i: mapping[i] for i in heavy}
+        refreshed = [-1] * reactant.n_atoms
+        for i, pidx in fixed.items():
+            refreshed[i] = pidx
+        mapping = _assign_hydrogens(reactant, product, refreshed, aligned_full)
     return mapping
 
 

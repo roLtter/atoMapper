@@ -60,8 +60,10 @@ def bonds_from_rdkit(mol: Molecule) -> set[tuple[int, int]] | None:
     return bonds
 
 
-def assign_bonds(mol: Molecule) -> Molecule:
+def assign_bonds(mol: Molecule, *, force: bool = False) -> Molecule:
     out = mol.copy()
+    if out.bonds and not force:
+        return out
     bonds = bonds_from_rdkit(out)
     if bonds is None:
         bonds = bonds_from_radii(out)
