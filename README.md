@@ -1,1 +1,1 @@
-# atoMapper
+# atom-mapper для NEB (ORCA)
