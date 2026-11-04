@@ -26,7 +26,17 @@ Modelfile-ы лежат в `ops/`.
 ```bash
 ollama create neb-fast -f ops/Modelfile.neb-fast
 ollama create neb-main -f ops/Modelfile.neb-main
+ollama list
 ollama ps
+ollama stop neb-fast
+```
+
+Сравнение моделей на фикстурах (Ollama должна быть запущена):
+
+```bash
+cd chem-worker
+python -m mapper.bench --model neb-fast
+python -m mapper.bench --no-llm
 ```
 
 ## Локальная разработка
