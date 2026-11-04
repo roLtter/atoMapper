@@ -38,6 +38,7 @@ type Job struct {
 type Service struct {
 	cfg    Config
 	rdb    *redis.Client
+	store  *objectStore
 	mu     sync.Mutex
 	memory map[string]*Job
 	client *http.Client
@@ -58,6 +59,12 @@ func NewService(cfg Config) (*Service, error) {
 	if err := s.rdb.Ping(ctx).Err(); err != nil {
 		s.rdb = nil
 	}
+	store, err := newObjectStore(cfg)
+	if err != nil {
+		fmt.Printf("minio disabled: %v\n", err)
+		store = nil
+	}
+	s.store = store
 	return s, nil
 }
 
@@ -167,9 +174,16 @@ func (s *Service) run(id string, reactant, product []byte, charge, multiplicity 
 
 	files := []string{"reactant_mapped.xyz", "product_mapped.xyz", "mapping.json", "report.md"}
 	for _, name := range files {
-		if err := s.fetchWorkerFile(mapped.JobID, name, filepath.Join(s.cfg.DataDir, id, name)); err != nil {
+		dest := filepath.Join(s.cfg.DataDir, id, name)
+		if err := s.fetchWorkerFile(mapped.JobID, name, dest); err != nil {
 			_ = s.update(id, StatusFailed, "error", err.Error())
 			return
+		}
+		if s.store != nil && s.store.enabled() {
+			if err := s.store.putFile(id, name, dest); err != nil {
+				_ = s.update(id, StatusFailed, "error", fmt.Sprintf("minio upload: %v", err))
+				return
+			}
 		}
 	}
 	_ = s.update(id, StatusDone, "done", "")

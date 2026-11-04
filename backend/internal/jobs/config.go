@@ -6,11 +6,16 @@ import (
 )
 
 type Config struct {
-	DataDir         string
-	ChemWorkerURL   string
-	RedisAddr       string
-	MaxUploadBytes  int64
-	MaxAtoms        int
+	DataDir        string
+	ChemWorkerURL  string
+	RedisAddr      string
+	MaxUploadBytes int64
+	MaxAtoms       int
+	MinioEndpoint  string
+	MinioAccessKey string
+	MinioSecretKey string
+	MinioBucket    string
+	MinioSecure    bool
 }
 
 func ConfigFromEnv() Config {
@@ -44,5 +49,17 @@ func ConfigFromEnv() Config {
 		RedisAddr:      redisAddr,
 		MaxUploadBytes: maxUpload,
 		MaxAtoms:       maxAtoms,
+		MinioEndpoint:  os.Getenv("MINIO_ENDPOINT"),
+		MinioAccessKey: envOr("MINIO_ACCESS_KEY", "minio"),
+		MinioSecretKey: envOr("MINIO_SECRET_KEY", "minio12345"),
+		MinioBucket:    envOr("MINIO_BUCKET", "atom-mapper"),
+		MinioSecure:    os.Getenv("MINIO_SECURE") == "true",
 	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
