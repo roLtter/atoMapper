@@ -1,6 +1,8 @@
 *.md
 !README.md
 
+context/
+
 .env
 .env.*
 !.env.example
@@ -25,5 +27,6 @@ build/
 *.dylib
 bin/
 tmp/
+data/
 .DS_Store
 Thumbs.db
