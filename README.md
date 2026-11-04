@@ -39,6 +39,9 @@ python -m mapper.bench --model neb-fast
 python -m mapper.bench --no-llm
 ```
 
+Синтетические формы пролина A / A' / A'' (без координат из SI статьи) входят в bench как
+`proline_a_a_prime` и `proline_a_zwitterion`.
+
 ## Локальная разработка
 
 ```bash

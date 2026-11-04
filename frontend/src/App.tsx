@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Markdown from 'react-markdown'
+import { MoleculeViewer } from './MoleculeViewer'
 
 type Job = {
   job_id: string
@@ -24,6 +25,8 @@ export default function App() {
   const [jobId, setJobId] = useState<string | null>(null)
   const [job, setJob] = useState<Job | null>(null)
   const [report, setReport] = useState('')
+  const [reactantXyz, setReactantXyz] = useState('')
+  const [productXyz, setProductXyz] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -40,8 +43,14 @@ export default function App() {
         if (stop) return
         setJob(data)
         if (data.status === 'done') {
-          const reportRes = await fetch(`/api/jobs/${jobId}/files/report.md`)
+          const [reportRes, rXyz, pXyz] = await Promise.all([
+            fetch(`/api/jobs/${jobId}/files/report.md`),
+            fetch(`/api/jobs/${jobId}/files/reactant_mapped.xyz`),
+            fetch(`/api/jobs/${jobId}/files/product_mapped.xyz`),
+          ])
           if (reportRes.ok) setReport(await reportRes.text())
+          if (rXyz.ok) setReactantXyz(await rXyz.text())
+          if (pXyz.ok) setProductXyz(await pXyz.text())
           setBusy(false)
           return
         }
@@ -70,6 +79,8 @@ export default function App() {
     setBusy(true)
     setError('')
     setReport('')
+    setReactantXyz('')
+    setProductXyz('')
     setJob(null)
     setJobId(null)
     const body = new FormData()
@@ -165,6 +176,13 @@ export default function App() {
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {(reactantXyz || productXyz) && (
+        <section className="grid gap-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6 md:grid-cols-2">
+          {reactantXyz && <MoleculeViewer title="Reactant mapped" xyz={reactantXyz} />}
+          {productXyz && <MoleculeViewer title="Product mapped" xyz={productXyz} />}
         </section>
       )}
 
