@@ -99,7 +99,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-llm", action="store_true")
     parser.add_argument(
         "--cases",
-        default="cyclohexanone_perm,chair_boat,proton_transfer,sn2,keto_enol",
+        default=(
+            "cyclohexanone_perm,chair_boat,proton_transfer,sn2,keto_enol,"
+            "proline_a_a_prime,proline_a_zwitterion"
+        ),
     )
     args = parser.parse_args(argv)
     use_llm = not args.no_llm

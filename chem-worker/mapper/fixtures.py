@@ -4,6 +4,7 @@ import numpy as np
 
 from mapper.geom import scramble
 from mapper.molecule import Molecule
+from mapper.proline import proline_pair
 
 
 def _mol(symbols: list[str], coords: list[list[float]], bonds: set[tuple[int, int]], charge: int = 0) -> Molecule:
@@ -111,8 +112,18 @@ def keto_enol_pair(rng: np.random.Generator | None = None) -> tuple[Molecule, Mo
     return keto, scrambled, true
 
 
+def proline_a_to_a_prime(rng: np.random.Generator | None = None) -> tuple[Molecule, Molecule, list[int]]:
+    return proline_pair("a_to_a_prime", rng)
+
+
+def proline_a_to_zwitterion(rng: np.random.Generator | None = None) -> tuple[Molecule, Molecule, list[int]]:
+    return proline_pair("a_to_a_double_prime", rng)
+
+
 CASES = {
     "proton_transfer": proton_transfer_pair,
     "sn2": sn2_pair,
     "keto_enol": keto_enol_pair,
+    "proline_a_a_prime": proline_a_to_a_prime,
+    "proline_a_zwitterion": proline_a_to_zwitterion,
 }
