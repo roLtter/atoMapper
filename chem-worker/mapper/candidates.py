@@ -6,9 +6,9 @@ import networkx as nx
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from mapper.align import apply_transform, hungarian_by_element, kabsch
+from mapper.align import apply_transform, kabsch
+from mapper.metrics import evaluate_candidate
 from mapper.molecule import Molecule
-
 
 def bond_graph(mol: Molecule, *, heavy_only: bool = False) -> nx.Graph:
     g = nx.Graph()
@@ -23,10 +23,8 @@ def bond_graph(mol: Molecule, *, heavy_only: bool = False) -> nx.Graph:
             g.add_edge(a, b)
     return g
 
-
 def _node_match(n1, n2) -> bool:
     return n1["element"] == n2["element"]
-
 
 def isomorphic_mappings(
     reactant: Molecule,
@@ -42,7 +40,6 @@ def isomorphic_mappings(
     matcher = nx.algorithms.isomorphism.GraphMatcher(g1, g2, node_match=_node_match)
     mappings: list[list[int]] = []
     for iso in itertools.islice(matcher.isomorphisms_iter(), max_isos):
-        # iso: reactant_idx -> product_idx
         m = [-1] * reactant.n_atoms
         for r, p in iso.items():
             m[r] = p
@@ -50,60 +47,75 @@ def isomorphic_mappings(
             mappings.append(m)
     return mappings
 
+def _neighbors(mol: Molecule, idx: int) -> list[int]:
+    out = []
+    for a, b in mol.bonds:
+        if a == idx:
+            out.append(b)
+        elif b == idx:
+            out.append(a)
+    return out
 
-def heavy_then_hydrogen_mapping(reactant: Molecule, product: Molecule) -> list[int]:
-    heavy_r = reactant.heavy_indices()
-    heavy_p = product.heavy_indices()
-    if len(heavy_r) != len(heavy_p):
-        raise ValueError("heavy atom count mismatch")
+def _heavy_bond_changes(reactant: Molecule, product: Molecule, heavy_map: dict[int, int]) -> int:
+    inv = {p: r for r, p in heavy_map.items()}
+    rb = {
+        (a, b) if a < b else (b, a)
+        for a, b in reactant.bonds
+        if reactant.symbols[a] != "H" and reactant.symbols[b] != "H"
+    }
+    pb = set()
+    for a, b in product.bonds:
+        if product.symbols[a] == "H" or product.symbols[b] == "H":
+            continue
+        if a not in inv or b not in inv:
+            continue
+        ra, rb_ = inv[a], inv[b]
+        pb.add((ra, rb_) if ra < rb_ else (rb_, ra))
+    return len(rb - pb) + len(pb - rb)
 
-    g1 = bond_graph(reactant, heavy_only=True)
-    g2 = bond_graph(product, heavy_only=True)
+def enumerate_heavy_maps(reactant: Molecule, product: Molecule, *, max_maps: int = 256) -> list[dict[int, int]]:
+    by_r: dict[str, list[int]] = {}
+    by_p: dict[str, list[int]] = {}
+    for i, s in enumerate(reactant.symbols):
+        if s != "H":
+            by_r.setdefault(s, []).append(i)
+    for i, s in enumerate(product.symbols):
+        if s != "H":
+            by_p.setdefault(s, []).append(i)
+    if set(by_r) != set(by_p):
+        return []
+    for el in by_r:
+        if len(by_r[el]) != len(by_p[el]):
+            return []
 
-    heavy_map_r_to_p: dict[int, int] | None = None
-    if nx.is_isomorphic(g1, g2, node_match=_node_match):
-        matcher = nx.algorithms.isomorphism.GraphMatcher(g1, g2, node_match=_node_match)
-        best = None
-        best_rmsd = float("inf")
-        for iso in itertools.islice(matcher.isomorphisms_iter(), 48):
-            idxs_r = list(iso.keys())
-            P = reactant.coords[idxs_r]
-            Q = product.coords[[iso[i] for i in idxs_r]]
-            _, _, r = kabsch(P, Q)
-            if r < best_rmsd:
-                best_rmsd = r
-                best = iso
-        heavy_map_r_to_p = best
+    import math
 
-    mapping = [-1] * reactant.n_atoms
-    if heavy_map_r_to_p is not None:
-        for r, p in heavy_map_r_to_p.items():
-            mapping[r] = p
-        R, t, _ = kabsch(
-            reactant.coords[heavy_r],
-            product.coords[[heavy_map_r_to_p[i] for i in heavy_r]],
-        )
-        prod_aligned = apply_transform(product.coords, R, t)
-    else:
-        # distance-matrix fingerprint matching per element among heavy atoms
-        mapping_partial = _match_heavy_by_distance(reactant, product)
-        for r, p in mapping_partial.items():
-            mapping[r] = p
-        R, t, _ = kabsch(
-            reactant.coords[heavy_r],
-            product.coords[[mapping_partial[i] for i in heavy_r]],
-        )
-        prod_aligned = apply_transform(product.coords, R, t)
+    elements = sorted(by_r.keys())
+    total = 1
+    for el in elements:
+        total *= math.factorial(len(by_r[el]))
+    if total > max_maps:
+        return []
 
-    mapping = _assign_hydrogens(reactant, product, mapping, prod_aligned)
-    mapping = _refine_mapping(reactant, product, mapping)
-    return mapping
+    per_el = []
+    for el in elements:
+        refs = by_r[el]
+        movs = by_p[el]
+        per_el.append([(refs, perm) for perm in itertools.permutations(movs)])
 
+    out: list[dict[int, int]] = []
+    for combo in itertools.product(*per_el):
+        m: dict[int, int] = {}
+        for refs, perm in combo:
+            for r, p in zip(refs, perm, strict=True):
+                m[r] = p
+        out.append(m)
+    out.sort(key=lambda hm: _heavy_bond_changes(reactant, product, hm))
+    return out[:max_maps]
 
 def _distance_fingerprint(mol: Molecule, idx: int, others: list[int]) -> np.ndarray:
     d = np.sort(np.linalg.norm(mol.coords[others] - mol.coords[idx], axis=1))
     return d
-
 
 def _match_heavy_by_distance(reactant: Molecule, product: Molecule) -> dict[int, int]:
     heavy_r = reactant.heavy_indices()
@@ -115,8 +127,8 @@ def _match_heavy_by_distance(reactant: Molecule, product: Molecule) -> dict[int,
     used_p: set[int] = set()
     for el, refs in by_el.items():
         movs = [i for i in product.heavy_indices() if product.symbols[i] == el and i not in used_p]
-        others_r = [i for i in heavy_r]
-        others_p = [i for i in product.heavy_indices()]
+        others_r = list(heavy_r)
+        others_p = product.heavy_indices()
         cost = np.zeros((len(refs), len(movs)))
         for a, ri in enumerate(refs):
             fr = _distance_fingerprint(reactant, ri, [j for j in others_r if j != ri])
@@ -130,119 +142,133 @@ def _match_heavy_by_distance(reactant: Molecule, product: Molecule) -> dict[int,
             used_p.add(movs[c])
     return result
 
-
-def _neighbors(mol: Molecule, idx: int) -> list[int]:
-    out = []
-    for a, b in mol.bonds:
-        if a == idx:
-            out.append(b)
-        elif b == idx:
-            out.append(a)
-    return out
-
-
-def _assign_hydrogens(
+def _assign_hydrogens_min_bond_changes(
     reactant: Molecule,
     product: Molecule,
-    mapping: list[int],
-    prod_aligned: np.ndarray,
+    heavy_map: dict[int, int],
 ) -> list[int]:
-    mapping = list(mapping)
-    assigned_p = {p for p in mapping if p >= 0}
+    n = reactant.n_atoms
+    mapping = [-1] * n
+    for r, p in heavy_map.items():
+        mapping[r] = p
+
+    heavy_r = list(heavy_map.keys())
+    R, t, _ = kabsch(
+        reactant.coords[heavy_r],
+        product.coords[[heavy_map[i] for i in heavy_r]],
+    )
+    aligned = apply_transform(product.coords, R, t)
+
     h_r = [i for i, s in enumerate(reactant.symbols) if s == "H"]
-    h_p = [i for i, s in enumerate(product.symbols) if s == "H" and i not in assigned_p]
+    h_p = [i for i, s in enumerate(product.symbols) if s == "H"]
 
-    # group H by heavy neighbor if unique
-    groups_r: dict[int, list[int]] = {}
-    ungrouped_r: list[int] = []
+    stable_r: list[int] = []
+    stable_pairs: list[tuple[int, list[int]]] = []
+    migrating_r: list[int] = []
     for hi in h_r:
-        heavies = [n for n in _neighbors(reactant, hi) if reactant.symbols[n] != "H"]
-        if len(heavies) == 1 and mapping[heavies[0]] >= 0:
-            groups_r.setdefault(heavies[0], []).append(hi)
+        heavies = [x for x in _neighbors(reactant, hi) if reactant.symbols[x] != "H"]
+        if len(heavies) == 1 and heavies[0] in heavy_map:
+            target = heavy_map[heavies[0]]
+            cand = [
+                pj
+                for pj in h_p
+                if target in [x for x in _neighbors(product, pj) if product.symbols[x] != "H"]
+            ]
+            stable_pairs.append((hi, cand))
+            stable_r.append(hi)
         else:
-            ungrouped_r.append(hi)
+            migrating_r.append(hi)
 
-    groups_p: dict[int, list[int]] = {}
-    ungrouped_p: list[int] = []
-    for hi in h_p:
-        heavies = [n for n in _neighbors(product, hi) if product.symbols[n] != "H"]
-        if len(heavies) == 1:
-            groups_p.setdefault(heavies[0], []).append(hi)
-        else:
-            ungrouped_p.append(hi)
+    used: set[int] = set()
+    by_target: dict[int, list[int]] = {}
+    for hi, cand in stable_pairs:
+        heavies = [x for x in _neighbors(reactant, hi) if reactant.symbols[x] != "H"]
+        by_target.setdefault(heavy_map[heavies[0]], []).append(hi)
 
-    for heavy_r, hrs in groups_r.items():
-        heavy_p = mapping[heavy_r]
-        candidates = list(groups_p.get(heavy_p, []))
-        if len(candidates) < len(hrs):
-            candidates = candidates + [h for h in ungrouped_p if h not in candidates]
-        candidates = candidates[: len(hrs)] if len(candidates) >= len(hrs) else candidates + ungrouped_p
-        # unique candidates
-        seen = set()
-        cand = []
-        for c in candidates + ungrouped_p + h_p:
-            if c not in seen and c not in assigned_p:
-                seen.add(c)
-                cand.append(c)
-        cand = cand[: len(hrs)]
-        if len(cand) != len(hrs):
+    for target, hrs in by_target.items():
+        cand = [
+            pj
+            for pj in h_p
+            if pj not in used
+            and target in [x for x in _neighbors(product, pj) if product.symbols[x] != "H"]
+        ]
+        if len(cand) < len(hrs):
+            for hi in hrs[len(cand) :]:
+                if hi not in migrating_r:
+                    migrating_r.append(hi)
+            hrs = hrs[: len(cand)]
+        if not hrs:
             continue
         cost = np.zeros((len(hrs), len(cand)))
         for a, ri in enumerate(hrs):
             for b, mi in enumerate(cand):
-                cost[a, b] = np.linalg.norm(reactant.coords[ri] - prod_aligned[mi])
+                cost[a, b] = np.linalg.norm(reactant.coords[ri] - aligned[mi])
         rows, cols = linear_sum_assignment(cost)
         for r, c in zip(rows, cols, strict=True):
             mapping[hrs[r]] = cand[c]
-            assigned_p.add(cand[c])
+            used.add(cand[c])
 
     leftover_r = [i for i in h_r if mapping[i] < 0]
-    leftover_p = [i for i in h_p if i not in assigned_p]
-    if leftover_r:
-        if len(leftover_r) != len(leftover_p):
-            raise ValueError("hydrogen count mismatch after heavy mapping")
-        cost = np.zeros((len(leftover_r), len(leftover_p)))
-        for a, ri in enumerate(leftover_r):
-            r_heavies = {mapping[n] for n in _neighbors(reactant, ri) if reactant.symbols[n] != "H" and mapping[n] >= 0}
-            for b, mi in enumerate(leftover_p):
-                p_heavies = {n for n in _neighbors(product, mi) if product.symbols[n] != "H"}
-                dist = float(np.linalg.norm(reactant.coords[ri] - prod_aligned[mi]))
-                preserve = len(r_heavies & p_heavies)
-                cost[a, b] = dist + 5.0 * (len(r_heavies) - preserve)
-        rows, cols = linear_sum_assignment(cost)
-        for r, c in zip(rows, cols, strict=True):
-            mapping[leftover_r[r]] = leftover_p[c]
+    leftover_p = [j for j in h_p if j not in used]
+    if len(leftover_r) != len(leftover_p):
+        raise ValueError("hydrogen count mismatch")
 
-    for i, v in enumerate(mapping):
-        if v < 0:
-            raise ValueError(f"unmapped atom {i}")
+    if not leftover_r:
+        return mapping
+
+    import math
+
+    if math.factorial(len(leftover_r)) <= 120:
+        best_m = None
+        best_score = None
+        for perm in itertools.permutations(leftover_p):
+            trial = list(mapping)
+            for ri, pj in zip(leftover_r, perm, strict=True):
+                trial[ri] = pj
+            metrics = evaluate_candidate(reactant, product, trial)
+            score = (metrics.n_bond_changes, metrics.rmsd, metrics.max_displacement)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_m = trial
+        assert best_m is not None
+        return best_m
+
+    cost = np.zeros((len(leftover_r), len(leftover_p)))
+    for a, ri in enumerate(leftover_r):
+        r_heavies = {heavy_map[n] for n in _neighbors(reactant, ri) if reactant.symbols[n] != "H" and n in heavy_map}
+        for b, mi in enumerate(leftover_p):
+            p_heavies = {n for n in _neighbors(product, mi) if product.symbols[n] != "H"}
+            dist = float(np.linalg.norm(reactant.coords[ri] - aligned[mi]))
+            preserve = len(r_heavies & p_heavies)
+            cost[a, b] = dist + 8.0 * (len(r_heavies) - preserve)
+    rows, cols = linear_sum_assignment(cost)
+    for r, c in zip(rows, cols, strict=True):
+        mapping[leftover_r[r]] = leftover_p[c]
     return mapping
 
+def mapping_from_heavy_map(reactant: Molecule, product: Molecule, heavy_map: dict[int, int]) -> list[int]:
+    return _assign_hydrogens_min_bond_changes(reactant, product, heavy_map)
 
-def _refine_mapping(reactant: Molecule, product: Molecule, mapping: list[int], rounds: int = 3) -> list[int]:
-    mapping = list(mapping)
-    heavy = reactant.heavy_indices()
-    for _ in range(rounds):
-        Q = product.coords[np.asarray(mapping)]
-        R, t, _ = kabsch(reactant.coords, Q)
-        aligned_full = apply_transform(product.coords, R, t)
-        fixed = {i: mapping[i] for i in heavy}
-        refreshed = [-1] * reactant.n_atoms
-        for i, pidx in fixed.items():
-            refreshed[i] = pidx
-        mapping = _assign_hydrogens(reactant, product, refreshed, aligned_full)
-    return mapping
+def heavy_then_hydrogen_mapping(reactant: Molecule, product: Molecule) -> list[int]:
+    g1 = bond_graph(reactant, heavy_only=True)
+    g2 = bond_graph(product, heavy_only=True)
+    if nx.is_isomorphic(g1, g2, node_match=_node_match):
+        matcher = nx.algorithms.isomorphism.GraphMatcher(g1, g2, node_match=_node_match)
+        best = None
+        best_rmsd = float("inf")
+        for iso in itertools.islice(matcher.isomorphisms_iter(), 48):
+            idxs_r = list(iso.keys())
+            _, _, r = kabsch(reactant.coords[idxs_r], product.coords[[iso[i] for i in idxs_r]])
+            if r < best_rmsd:
+                best_rmsd = r
+                best = iso
+        if best is not None:
+            return mapping_from_heavy_map(reactant, product, best)
+    return mapping_from_heavy_map(reactant, product, _match_heavy_by_distance(reactant, product))
 
-
-def score_mapping_rmsd(reactant: Molecule, product: Molecule, mapping: list[int]) -> float:
-    Q = product.coords[np.asarray(mapping)]
-    _, _, r = kabsch(reactant.coords, Q)
-    return r
-
-
-def generate_candidates(reactant: Molecule, product: Molecule, *, top_k: int = 5) -> list[list[int]]:
+def generate_candidates(reactant: Molecule, product: Molecule, *, top_k: int = 8) -> list[list[int]]:
     seen: set[tuple[int, ...]] = set()
-    scored: list[tuple[float, list[int]]] = []
+    mappings: list[list[int]] = []
 
     def add(m: list[int]) -> None:
         key = tuple(m)
@@ -251,15 +277,30 @@ def generate_candidates(reactant: Molecule, product: Molecule, *, top_k: int = 5
         if sorted(m) != list(range(len(m))):
             return
         seen.add(key)
-        scored.append((score_mapping_rmsd(reactant, product, m), m))
+        mappings.append(m)
 
     for m in isomorphic_mappings(reactant, product):
         add(m)
 
-    add(heavy_then_hydrogen_mapping(reactant, product))
+    heavy_maps = enumerate_heavy_maps(reactant, product)
+    if not heavy_maps:
+        heavy_maps = [_match_heavy_by_distance(reactant, product)]
+        g1 = bond_graph(reactant, heavy_only=True)
+        g2 = bond_graph(product, heavy_only=True)
+        if nx.is_isomorphic(g1, g2, node_match=_node_match):
+            matcher = nx.algorithms.isomorphism.GraphMatcher(g1, g2, node_match=_node_match)
+            for iso in itertools.islice(matcher.isomorphisms_iter(), 24):
+                heavy_maps.append(dict(iso))
 
-    # identity as weak baseline when sizes match
+    heavy_maps = sorted(heavy_maps, key=lambda hm: _heavy_bond_changes(reactant, product, hm))[:12]
+    for hm in heavy_maps:
+        add(mapping_from_heavy_map(reactant, product, hm))
+
+    add(heavy_then_hydrogen_mapping(reactant, product))
     add(list(range(reactant.n_atoms)))
 
-    scored.sort(key=lambda x: x[0])
-    return [m for _, m in scored[:top_k]]
+    ranked = sorted(
+        (evaluate_candidate(reactant, product, m) for m in mappings),
+        key=lambda c: (c.n_bond_changes, c.rmsd, c.max_displacement),
+    )
+    return [c.mapping for c in ranked[:top_k]]

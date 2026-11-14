@@ -2,61 +2,51 @@ from __future__ import annotations
 
 import json
 
-from mapper.metrics import CandidateMetrics
 from mapper.molecule import Molecule
 
-SYSTEM_PROMPT = """You map atoms between a reactant and a product for ORCA NEB.
-You are given compact topology and top candidate mappings from an algorithm.
-Choose the chemically best candidate (or a corrected mapping if clearly wrong).
-Do not invent atoms. Prefer preserving heavy-atom skeleton and sensible bond changes.
-Reply with JSON only.
-
-Few-shot:
-1) Cyclohexanone chair -> boat: graphs isomorphic, choose lowest RMSD candidate that keeps carbonyl O/C and ring adjacency.
-2) Proton transfer HA-B -> A BH: one H moves; exactly one broken and one formed bond involving that H.
+SYSTEM_PROMPT = """Atom-mapping for ORCA NEB.
+Reply with ONE JSON object only. First character must be '{'.
+Required: {"mapping":[p0,p1,...]} length n, a permutation of 0..n-1.
+Rules:
+- mapping[i] = product atom index for reactant atom i
+- element(reactant[i]) == element(product[mapping[i]])
+- no markdown, no prose outside JSON
 """
 
+def build_user_prompt(reactant: Molecule, product: Molecule, *, compact: bool = False) -> str:
+    payload = {
+        "n": reactant.n_atoms,
+        "R_el": reactant.symbols,
+        "P_el": product.symbols,
+        "R_bonds": sorted(list(reactant.bonds)),
+        "P_bonds": sorted(list(product.bonds)),
+    }
+    if not compact:
+        payload["R_xyz"] = [[round(float(x), 3) for x in row] for row in reactant.coords.tolist()]
+        payload["P_xyz"] = [[round(float(x), 3) for x in row] for row in product.coords.tolist()]
+    return json.dumps(payload, separators=(",", ":"))
 
-def build_user_prompt(
+def sanitize_reject_reason(reason: str) -> str:
+    low = reason.lower()
+    if "element mismatch" in low:
+        return "element mismatch: mapping[i] must keep the same element as reactant[i]"
+    if "bijection" in low or "not a bijection" in low:
+        return "mapping must be a bijection (permutation of 0..n-1)"
+    if "length" in low:
+        return "mapping length must equal n"
+    if "chemically poor" in low or "bond_changes" in low or "rmsd" in low:
+        return "chemically poor mapping: minimize bond broken/formed and geometric displacement"
+    return "invalid mapping; output a new permutation obeying element equality"
+
+def build_repair_prompt(
     reactant: Molecule,
     product: Molecule,
-    candidates: list[CandidateMetrics],
+    *,
+    bad_mapping: list[int],
+    reason: str,
+    compact: bool = True,
 ) -> str:
-    payload = {
-        "formula": reactant.formula(),
-        "n_atoms": reactant.n_atoms,
-        "reactant_elements": [{"index": i, "element": s} for i, s in enumerate(reactant.symbols)],
-        "product_elements": [{"index": i, "element": s} for i, s in enumerate(product.symbols)],
-        "reactant_bonds": sorted(list(reactant.bonds)),
-        "product_bonds": sorted(list(product.bonds)),
-        "candidates": [
-            {
-                "id": i,
-                "mapping": c.mapping,
-                "rmsd": round(c.rmsd, 5),
-                "max_displacement": round(c.max_displacement, 5),
-                "min_lerp_distance": round(c.min_lerp_distance, 5),
-                "broken_bonds": c.broken_bonds,
-                "formed_bonds": c.formed_bonds,
-            }
-            for i, c in enumerate(candidates)
-        ],
-        "ambiguous_groups": _ambiguous_groups(candidates),
-    }
-    return (
-        "Select the best atom mapping candidate for NEB.\n"
-        "mapping[i] = product atom index corresponding to reactant atom i.\n"
-        + json.dumps(payload, indent=2)
-    )
-
-
-def _ambiguous_groups(candidates: list[CandidateMetrics]) -> list[dict]:
-    if len(candidates) < 2:
-        return []
-    n = len(candidates[0].mapping)
-    ambiguous = []
-    for i in range(n):
-        values = {c.mapping[i] for c in candidates}
-        if len(values) > 1:
-            ambiguous.append({"reactant_index": i, "product_choices": sorted(values)})
-    return ambiguous[:40]
+    base = json.loads(build_user_prompt(reactant, product, compact=compact))
+    base["previous_mapping"] = bad_mapping
+    base["reject_reason"] = sanitize_reject_reason(reason)
+    return json.dumps(base, separators=(",", ":"))
