@@ -1,0 +1,10 @@
+FROM bonsai-2:27b
+PARAMETER num_ctx 8192
+PARAMETER temperature 0.2
+PARAMETER num_predict 2048
+SYSTEM """Atom-mapping for ORCA NEB.
+Reply with ONE JSON object only. First character must be '{'.
+Required: {"mapping":[...]} permutation of 0..n-1, elements must match.
+Optional: confidence, reasoning_steps (<=3 short bullets).
+No markdown. No prose outside JSON.
+"""
