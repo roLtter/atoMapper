@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import Markdown from 'react-markdown'
 import { MoleculeViewer } from './MoleculeViewer'
+import { ReportView } from './ReportView'
 
 type Job = {
   job_id: string
@@ -21,7 +21,6 @@ export default function App() {
   const [product, setProduct] = useState<File | null>(null)
   const [charge, setCharge] = useState(0)
   const [multiplicity, setMultiplicity] = useState(1)
-  const [useLlm, setUseLlm] = useState(true)
   const [jobId, setJobId] = useState<string | null>(null)
   const [job, setJob] = useState<Job | null>(null)
   const [report, setReport] = useState('')
@@ -89,7 +88,7 @@ export default function App() {
     body.append('product', product)
     body.append('charge', String(charge))
     body.append('multiplicity', String(multiplicity))
-    body.append('use_llm', useLlm ? 'true' : 'false')
+    body.append('use_llm', 'true')
     try {
       const res = await fetch('/api/jobs', { method: 'POST', body })
       const data = await res.json()
@@ -119,19 +118,21 @@ export default function App() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-4 py-10">
-      <header className="space-y-2">
-        <p className="text-sm tracking-[0.18em] text-[var(--muted)] uppercase">NEB prep</p>
-        <h1 className="text-4xl tracking-tight text-[var(--ink)] md:text-5xl" style={{ fontFamily: 'var(--serif)' }}>
-          atom-mapper
+      <header className="space-y-3">
+        <h1
+          className="text-4xl tracking-tight text-[var(--ink)] md:text-5xl"
+          style={{ fontFamily: 'var(--serif)' }}
+        >
+          atoMapper
         </h1>
         <p className="max-w-2xl text-[var(--muted)]">
-          Upload reactant and product `.xyz`. Get matching atom numbering for ORCA NEB, plus a step-by-step report.
+          Согласуй нумерацию атомов в reactant/product `.xyz` для ORCA NEB и получи отчёт по связям.
         </p>
       </header>
 
       <form
         onSubmit={onSubmit}
-        className="grid gap-6 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6 shadow-sm md:grid-cols-2"
+        className="grid gap-6 rounded-2xl border border-[var(--line)] bg-[var(--panel)]/90 p-6 shadow-sm md:grid-cols-2"
       >
         <Dropzone label="Reactant" file={reactant} onFile={setReactant} />
         <Dropzone label="Product" file={product} onFile={setProduct} />
@@ -156,25 +157,20 @@ export default function App() {
           />
         </label>
 
-        <label className="flex items-center gap-2 text-sm md:col-span-2">
-          <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
-          Use LLM mapping (local Bonsai / cloud — see LLM_MODEL in .env)
-        </label>
-
         <button
           type="submit"
           disabled={!canSubmit}
-          className="md:col-span-2 rounded-xl bg-[var(--accent)] px-4 py-3 font-medium text-[var(--accent-ink)] disabled:opacity-40"
+          className="md:col-span-2 rounded-xl bg-[var(--accent)] px-4 py-3 font-semibold text-[var(--accent-ink)] disabled:opacity-40"
         >
           {busy ? 'Running…' : 'Map atoms'}
         </button>
       </form>
 
       {(job || error) && (
-        <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6">
-          <h2 className="text-xl font-medium">Status</h2>
+        <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-[var(--panel)]/90 p-6">
+          <h2 className="text-xl font-semibold">Status</h2>
           {job && (
-            <p className="text-sm text-[var(--muted)]">
+            <p className="font-mono text-sm text-[var(--muted)]">
               {job.job_id} · {job.status} · {job.step}
             </p>
           )}
@@ -184,14 +180,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={downloadMapped}
-                className="rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-medium text-[var(--accent-ink)]"
+                className="rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[var(--accent-ink)]"
               >
                 Скачать готовые файлы
               </button>
               {FILES.filter((n) => n === 'mapping.json' || n === 'report.md').map((name) => (
                 <a
                   key={name}
-                  className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm hover:bg-white"
+                  className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm hover:bg-[var(--accent-soft)]"
                   href={`/api/jobs/${jobId}/files/${name}`}
                   download
                 >
@@ -204,8 +200,8 @@ export default function App() {
       )}
 
       {done && (reactantXyz || productXyz) && (
-        <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6">
-          <h2 className="text-xl font-medium">Mapped structures</h2>
+        <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]/90 p-6">
+          <h2 className="text-xl font-semibold">Mapped structures</h2>
           <div className="grid min-w-0 gap-6 md:grid-cols-2">
             {reactantXyz ? (
               <MoleculeViewer title="reactant_mapped.xyz" xyz={reactantXyz} />
@@ -221,11 +217,7 @@ export default function App() {
         </section>
       )}
 
-      {report && (
-        <section className="prose prose-stone max-w-none rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6">
-          <Markdown>{report}</Markdown>
-        </section>
-      )}
+      {report && <ReportView report={report} />}
     </div>
   )
 }
@@ -240,8 +232,8 @@ function Dropzone({
   onFile: (f: File | null) => void
 }) {
   return (
-    <label className="flex min-h-36 cursor-pointer flex-col items-start justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white/70 px-4 py-6 text-left">
-      <span className="text-sm font-medium">{label}</span>
+    <label className="flex min-h-36 cursor-pointer flex-col items-start justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white/80 px-4 py-6 text-left transition hover:border-[var(--accent)]">
+      <span className="text-sm font-semibold">{label}</span>
       <span className="text-sm text-[var(--muted)]">{file ? file.name : 'Drop .xyz or click'}</span>
       <input
         className="hidden"
