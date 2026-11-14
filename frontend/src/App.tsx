@@ -21,7 +21,7 @@ export default function App() {
   const [product, setProduct] = useState<File | null>(null)
   const [charge, setCharge] = useState(0)
   const [multiplicity, setMultiplicity] = useState(1)
-  const [useLlm, setUseLlm] = useState(false)
+  const [useLlm, setUseLlm] = useState(true)
   const [jobId, setJobId] = useState<string | null>(null)
   const [job, setJob] = useState<Job | null>(null)
   const [report, setReport] = useState('')
@@ -31,6 +31,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
 
   const canSubmit = useMemo(() => !!reactant && !!product && !busy, [reactant, product, busy])
+  const done = job?.status === 'done' && !!jobId
 
   useEffect(() => {
     if (!jobId) return
@@ -100,6 +101,22 @@ export default function App() {
     }
   }
 
+  async function downloadMapped() {
+    if (!jobId) return
+    for (const name of ['reactant_mapped.xyz', 'product_mapped.xyz'] as const) {
+      const res = await fetch(`/api/jobs/${jobId}/files/${name}`)
+      if (!res.ok) continue
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      a.click()
+      URL.revokeObjectURL(url)
+      await new Promise((r) => setTimeout(r, 150))
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-4 py-10">
       <header className="space-y-2">
@@ -141,7 +158,7 @@ export default function App() {
 
         <label className="flex items-center gap-2 text-sm md:col-span-2">
           <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
-          Use local LLM check
+          Use LLM mapping (local Bonsai / cloud — see LLM_MODEL in .env)
         </label>
 
         <button
@@ -162,9 +179,16 @@ export default function App() {
             </p>
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
-          {job?.status === 'done' && jobId && (
-            <div className="flex flex-wrap gap-2">
-              {FILES.map((name) => (
+          {done && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={downloadMapped}
+                className="rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-medium text-[var(--accent-ink)]"
+              >
+                Скачать готовые файлы
+              </button>
+              {FILES.filter((n) => n === 'mapping.json' || n === 'report.md').map((name) => (
                 <a
                   key={name}
                   className="rounded-lg border border-[var(--line)] px-3 py-2 text-sm hover:bg-white"
@@ -179,10 +203,21 @@ export default function App() {
         </section>
       )}
 
-      {(reactantXyz || productXyz) && (
-        <section className="grid gap-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6 md:grid-cols-2">
-          {reactantXyz && <MoleculeViewer title="Reactant mapped" xyz={reactantXyz} />}
-          {productXyz && <MoleculeViewer title="Product mapped" xyz={productXyz} />}
+      {done && (reactantXyz || productXyz) && (
+        <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6">
+          <h2 className="text-xl font-medium">Mapped structures</h2>
+          <div className="grid min-w-0 gap-6 md:grid-cols-2">
+            {reactantXyz ? (
+              <MoleculeViewer title="reactant_mapped.xyz" xyz={reactantXyz} />
+            ) : (
+              <p className="text-sm text-[var(--muted)]">reactant_mapped.xyz недоступен</p>
+            )}
+            {productXyz ? (
+              <MoleculeViewer title="product_mapped.xyz" xyz={productXyz} />
+            ) : (
+              <p className="text-sm text-[var(--muted)]">product_mapped.xyz недоступен</p>
+            )}
+          </div>
         </section>
       )}
 

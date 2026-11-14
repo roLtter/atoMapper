@@ -44,7 +44,7 @@ func NewRouter(svc *jobs.Service) *gin.Engine {
 		charge, _ := strconv.Atoi(c.DefaultPostForm("charge", "0"))
 		mult, _ := strconv.Atoi(c.DefaultPostForm("multiplicity", "1"))
 		model := c.PostForm("model")
-		useLLM := c.DefaultPostForm("use_llm", "false") == "true"
+		useLLM := c.DefaultPostForm("use_llm", "true") == "true"
 
 		job, err := svc.CreateJob(reactant, product, charge, mult, model, useLLM)
 		if err != nil {
