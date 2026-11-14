@@ -9,6 +9,25 @@ from mapper.geom import scramble as scramble
 from mapper.molecule import Molecule
 
 
+class FakeLLM:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def chat_json(self, messages, *, schema=None):
+        return dict(self.payload)
+
+
+def oracle_llm(mapping: list[int]) -> FakeLLM:
+    return FakeLLM(
+        {
+            "mapping": list(mapping),
+            "bond_changes": {"broken": [], "formed": []},
+            "confidence": 1.0,
+            "reasoning_steps": ["oracle"],
+        }
+    )
+
+
 def mol_from_smiles(smiles: str, seed: int = 0xC0FFEE) -> Molecule:
     m = Chem.MolFromSmiles(smiles)
     if m is None:

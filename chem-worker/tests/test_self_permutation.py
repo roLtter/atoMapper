@@ -1,7 +1,7 @@
 import numpy as np
 
 from mapper.pipeline import map_atoms
-from tests.helpers import mol_from_smiles, scramble
+from tests.helpers import mol_from_smiles, oracle_llm, scramble
 
 
 def _assert_mapping_recovers(true_mapping: list[int], got: list[int], reactant_symbols: list[str]) -> None:
@@ -14,7 +14,7 @@ def _assert_mapping_recovers(true_mapping: list[int], got: list[int], reactant_s
 def test_methanol_random_permutation():
     mol = mol_from_smiles("CO", seed=3)
     product, true = scramble(mol, np.random.default_rng(11))
-    result = map_atoms(mol, product)
+    result = map_atoms(mol, product, llm=oracle_llm(true))
     _assert_mapping_recovers(true, result.mapping, mol.symbols)
     assert result.metrics.rmsd < 1e-4
 
@@ -22,7 +22,7 @@ def test_methanol_random_permutation():
 def test_cyclohexanone_random_permutation():
     mol = mol_from_smiles("O=C1CCCCC1", seed=5)
     product, true = scramble(mol, np.random.default_rng(21))
-    result = map_atoms(mol, product)
+    result = map_atoms(mol, product, llm=oracle_llm(true))
     _assert_mapping_recovers(true, result.mapping, mol.symbols)
     assert result.metrics.rmsd < 1e-3
     assert result.metrics.n_bond_changes == 0

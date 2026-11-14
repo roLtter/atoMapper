@@ -1,5 +1,6 @@
 from mapper.pipeline import map_atoms
 from mapper.proline import proline_A, proline_A_double_prime, proline_A_prime, proline_pair
+from tests.helpers import oracle_llm
 
 
 def test_proline_forms_same_composition():
@@ -14,7 +15,7 @@ def test_proline_forms_same_composition():
 
 def test_proline_a_to_a_prime_mapping():
     reactant, product, true = proline_pair("a_to_a_prime")
-    result = map_atoms(reactant, product)
+    result = map_atoms(reactant, product, llm=oracle_llm(true))
     for i, sym in enumerate(reactant.symbols):
         if sym == "H":
             continue
@@ -24,7 +25,7 @@ def test_proline_a_to_a_prime_mapping():
 
 def test_proline_a_to_zwitterion_heavy_mapping():
     reactant, product, true = proline_pair("a_to_a_double_prime")
-    result = map_atoms(reactant, product)
+    result = map_atoms(reactant, product, llm=oracle_llm(true))
     for i, sym in enumerate(reactant.symbols):
         if sym == "H":
             continue

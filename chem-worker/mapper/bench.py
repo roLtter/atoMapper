@@ -8,9 +8,8 @@ import numpy as np
 
 from mapper.fixtures import CASES
 from mapper.geom import scramble
-from mapper.llm import LLMConfig, OllamaProvider
+from mapper.llm import LLMConfig, make_llm_provider
 from mapper.pipeline import map_atoms
-
 
 @dataclass
 class Row:
@@ -23,10 +22,8 @@ class Row:
     seconds: float
     detail: str = ""
 
-
 def _heavy_ok(symbols: list[str], got: list[int], true: list[int]) -> bool:
     return all(got[i] == true[i] for i, s in enumerate(symbols) if s != "H")
-
 
 def _mol_from_smiles(smiles: str, seed: int):
     from rdkit import Chem
@@ -49,14 +46,13 @@ def _mol_from_smiles(smiles: str, seed: int):
     )
     return assign_bonds(Molecule(symbols=symbols, coords=coords))
 
-
 def run_case(name: str, model: str, use_llm: bool) -> Row:
     t0 = time.perf_counter()
     llm = None
     if use_llm:
         cfg = LLMConfig.from_env()
         cfg.model = model
-        llm = OllamaProvider(cfg)
+        llm = make_llm_provider(cfg)
 
     if name == "cyclohexanone_perm":
         mol = _mol_from_smiles("O=C1CCCCC1", seed=5)
@@ -92,11 +88,10 @@ def run_case(name: str, model: str, use_llm: bool) -> Row:
         seconds=time.perf_counter() - t0,
     )
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m mapper.bench")
-    parser.add_argument("--model", default="neb-fast")
-    parser.add_argument("--no-llm", action="store_true")
+    parser.add_argument("--model", default="bonsai-2:27b")
+    parser.add_argument("--no-llm", action="store_true", help="unsupported: mapping requires LLM")
     parser.add_argument(
         "--cases",
         default=(
@@ -133,7 +128,6 @@ def main(argv: list[str] | None = None) -> int:
     n_ok = sum(1 for r in rows if r.ok)
     print(f"passed {n_ok}/{len(rows)}")
     return 0 if n_ok == len(rows) else 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

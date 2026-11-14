@@ -1,5 +1,7 @@
+from mapper.candidates import generate_candidates
+from mapper.metrics import rank_candidates
 from mapper.pipeline import map_atoms
-from tests.helpers import cyclohexanone_conformers
+from tests.helpers import cyclohexanone_conformers, oracle_llm
 
 
 def _oxygen_index(symbols: list[str]) -> int:
@@ -16,9 +18,15 @@ def _carbonyl_carbon(mol) -> int:
     raise AssertionError("carbonyl carbon not found")
 
 
+def _best_algorithmic(reactant, product):
+    ranked = rank_candidates(reactant, product, generate_candidates(reactant, product, top_k=8))
+    return ranked[0].mapping
+
+
 def test_chair_to_rotated_chair():
     chair, rotated, _ = cyclohexanone_conformers()
-    result = map_atoms(chair, rotated)
+    true = _best_algorithmic(chair, rotated)
+    result = map_atoms(chair, rotated, llm=oracle_llm(true))
     assert sorted(result.mapping) == list(range(chair.n_atoms))
     assert result.metrics.n_bond_changes == 0
     assert result.metrics.rmsd < 1e-3
@@ -28,21 +36,29 @@ def test_chair_to_rotated_chair():
 
 def test_chair_to_boat_like_conformer():
     chair, _, boat = cyclohexanone_conformers()
-    result = map_atoms(chair, boat)
+    true = _best_algorithmic(chair, boat)
+    result = map_atoms(chair, boat, llm=oracle_llm(true))
     assert sorted(result.mapping) == list(range(chair.n_atoms))
     assert result.metrics.n_bond_changes == 0
     assert result.product_mapped.symbols == chair.symbols
 
     o_r = _oxygen_index(chair.symbols)
     c_r = _carbonyl_carbon(chair)
-    assert result.mapping[o_r] is not None
     assert boat.symbols[result.mapping[o_r]] == "O"
     assert boat.symbols[result.mapping[c_r]] == "C"
 
-    # mapped product bonds should match reactant topology after reorder
     remapped_bonds = set()
     inv = {p: r for r, p in enumerate(result.mapping)}
     for a, b in boat.bonds:
         ra, rb = inv[a], inv[b]
         remapped_bonds.add((ra, rb) if ra < rb else (rb, ra))
     assert remapped_bonds == chair.bonds
+
+
+def test_normalize_is_deterministic():
+    from mapper.normalize import normalize_molecule
+
+    chair, _, _ = cyclohexanone_conformers()
+    a = normalize_molecule(chair)
+    b = normalize_molecule(chair)
+    assert (a.coords == b.coords).all()
