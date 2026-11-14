@@ -76,16 +76,34 @@ def map_atoms(
     report.append("- centered + principal-axis orientation for LLM input")
     report.append("- original geometries kept for NEB output / Kabsch")
 
+    algo = _algo_best(reactant, product)
+    report.append("")
+    report.append("## selection")
+
     if not use_llm:
-        raise ValueError("Atom mapping requires LLM (use_llm=True). Algorithm only normalizes poses.")
+        report.append("- method: algorithmic (no LLM)")
+        report.append(
+            f"- chosen mapping: {algo.mapping}"
+        )
+        report.append(
+            f"- metrics: rmsd={algo.rmsd:.4f} broken={algo.broken_bonds} formed={algo.formed_bonds}"
+        )
+        product_mapped = aligned_product(reactant, product.reorder(algo.mapping))
+        result = MappingResult(
+            reactant=reactant,
+            product_mapped=product_mapped,
+            mapping=algo.mapping,
+            metrics=algo,
+            candidates=[algo],
+            report_lines=report,
+        )
+        if out_dir is not None:
+            result.write(out_dir)
+        return result
 
     cfg = LLMConfig.from_env()
     provider = llm or make_llm_provider(cfg)
-    report.append("")
-    report.append("## selection")
     report.append(f"- method: LLM ({cfg.provider}/{cfg.model})")
-
-    algo = _algo_best(reactant, product)
     report.append(
         f"- algo baseline: mapping={algo.mapping} "
         f"rmsd={algo.rmsd:.4f} bond_changes={algo.n_bond_changes}"

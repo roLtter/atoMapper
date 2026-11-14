@@ -16,9 +16,10 @@ def ethanol_dme_paths():
     return reactant, product
 
 
-def test_ethanol_to_dme_requires_llm(ethanol_dme_paths):
+def test_ethanol_to_dme_algo_only(ethanol_dme_paths):
     reactant_path, product_path = ethanol_dme_paths
     reactant = parse_xyz(reactant_path)
     product = parse_xyz(product_path)
-    with pytest.raises(ValueError, match="requires LLM"):
-        map_atoms(reactant, product, use_llm=False)
+    result = map_atoms(reactant, product, use_llm=False)
+    assert sorted(result.mapping) == list(range(reactant.n_atoms))
+    assert any("algorithmic" in line for line in result.report_lines)

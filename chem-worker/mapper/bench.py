@@ -91,7 +91,7 @@ def run_case(name: str, model: str, use_llm: bool) -> Row:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m mapper.bench")
     parser.add_argument("--model", default="bonsai-2:27b")
-    parser.add_argument("--no-llm", action="store_true", help="unsupported: mapping requires LLM")
+    parser.add_argument("--no-llm", action="store_true", help="algorithmic mapping only (CI)")
     parser.add_argument(
         "--cases",
         default=(
