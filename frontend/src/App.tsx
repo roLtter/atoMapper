@@ -16,6 +16,12 @@ const FILES = [
   'report.md',
 ] as const
 
+function pickXyz(files: FileList | null): File | null {
+  if (!files?.length) return null
+  const list = Array.from(files)
+  return list.find((f) => /\.xyz$/i.test(f.name)) ?? list[0] ?? null
+}
+
 export default function App() {
   const [reactant, setReactant] = useState<File | null>(null)
   const [product, setProduct] = useState<File | null>(null)
@@ -55,7 +61,7 @@ export default function App() {
           return
         }
         if (data.status === 'failed') {
-          setError(data.error || 'job failed')
+          setError(data.error || 'ошибка задачи')
           setBusy(false)
           return
         }
@@ -116,9 +122,19 @@ export default function App() {
     }
   }
 
+  const statusLabel =
+    job?.status === 'done'
+      ? 'готово'
+      : job?.status === 'failed'
+        ? 'ошибка'
+        : job?.status === 'running'
+          ? 'считается'
+          : job?.status ?? ''
+
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-4 py-10">
-      <header className="space-y-3">
+      <header className="space-y-2">
+        <p className="text-sm tracking-[0.18em] text-[var(--muted)] uppercase">NEB PREP</p>
         <h1
           className="text-4xl tracking-tight text-[var(--ink)] md:text-5xl"
           style={{ fontFamily: 'var(--serif)' }}
@@ -126,7 +142,7 @@ export default function App() {
           atoMapper
         </h1>
         <p className="max-w-2xl text-[var(--muted)]">
-          Согласуй нумерацию атомов в reactant/product `.xyz` для ORCA NEB и получи отчёт по связям.
+          Загрузите реагент и продукт (`.xyz`), получите согласованную нумерацию атомов для ORCA NEB и отчёт по связям.
         </p>
       </header>
 
@@ -134,11 +150,11 @@ export default function App() {
         onSubmit={onSubmit}
         className="grid gap-6 rounded-2xl border border-[var(--line)] bg-[var(--panel)]/90 p-6 shadow-sm md:grid-cols-2"
       >
-        <Dropzone label="Reactant" file={reactant} onFile={setReactant} />
-        <Dropzone label="Product" file={product} onFile={setProduct} />
+        <Dropzone label="Реагент" file={reactant} onFile={setReactant} />
+        <Dropzone label="Продукт" file={product} onFile={setProduct} />
 
         <label className="flex flex-col gap-1 text-sm">
-          Charge
+          Заряд
           <input
             className="rounded-lg border border-[var(--line)] bg-white px-3 py-2"
             type="number"
@@ -147,7 +163,7 @@ export default function App() {
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
-          Multiplicity
+          Мультиплетность
           <input
             className="rounded-lg border border-[var(--line)] bg-white px-3 py-2"
             type="number"
@@ -162,16 +178,17 @@ export default function App() {
           disabled={!canSubmit}
           className="md:col-span-2 rounded-xl bg-[var(--accent)] px-4 py-3 font-semibold text-[var(--accent-ink)] disabled:opacity-40"
         >
-          {busy ? 'Running…' : 'Map atoms'}
+          {busy ? 'Считаем…' : 'Сопоставить атомы'}
         </button>
       </form>
 
       {(job || error) && (
         <section className="space-y-3 rounded-2xl border border-[var(--line)] bg-[var(--panel)]/90 p-6">
-          <h2 className="text-xl font-semibold">Status</h2>
+          <h2 className="text-xl font-semibold">Статус</h2>
           {job && (
             <p className="font-mono text-sm text-[var(--muted)]">
-              {job.job_id} · {job.status} · {job.step}
+              {job.job_id} · {statusLabel}
+              {job.step ? ` · ${job.step}` : ''}
             </p>
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
@@ -201,17 +218,17 @@ export default function App() {
 
       {done && (reactantXyz || productXyz) && (
         <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]/90 p-6">
-          <h2 className="text-xl font-semibold">Mapped structures</h2>
+          <h2 className="text-xl font-semibold">Согласованные структуры</h2>
           <div className="grid min-w-0 gap-6 md:grid-cols-2">
             {reactantXyz ? (
-              <MoleculeViewer title="reactant_mapped.xyz" xyz={reactantXyz} />
+              <MoleculeViewer title="Реагент (согласованный)" xyz={reactantXyz} />
             ) : (
-              <p className="text-sm text-[var(--muted)]">reactant_mapped.xyz недоступен</p>
+              <p className="text-sm text-[var(--muted)]">Файл реагента недоступен</p>
             )}
             {productXyz ? (
-              <MoleculeViewer title="product_mapped.xyz" xyz={productXyz} />
+              <MoleculeViewer title="Продукт (согласованный)" xyz={productXyz} />
             ) : (
-              <p className="text-sm text-[var(--muted)]">product_mapped.xyz недоступен</p>
+              <p className="text-sm text-[var(--muted)]">Файл продукта недоступен</p>
             )}
           </div>
         </section>
@@ -231,15 +248,47 @@ function Dropzone({
   file: File | null
   onFile: (f: File | null) => void
 }) {
+  const [dragOver, setDragOver] = useState(false)
+
   return (
-    <label className="flex min-h-36 cursor-pointer flex-col items-start justify-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-white/80 px-4 py-6 text-left transition hover:border-[var(--accent)]">
+    <label
+      className={[
+        'flex min-h-36 cursor-pointer flex-col items-start justify-center gap-2 rounded-xl border border-dashed px-4 py-6 text-left transition',
+        dragOver
+          ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+          : 'border-[var(--line)] bg-white/80 hover:border-[var(--accent)]',
+      ].join(' ')}
+      onDragEnter={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDragOver(true)
+      }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDragOver(true)
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDragOver(false)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDragOver(false)
+        onFile(pickXyz(e.dataTransfer.files))
+      }}
+    >
       <span className="text-sm font-semibold">{label}</span>
-      <span className="text-sm text-[var(--muted)]">{file ? file.name : 'Drop .xyz or click'}</span>
+      <span className="text-sm text-[var(--muted)]">
+        {file ? file.name : 'Перетащите .xyz сюда или нажмите, чтобы выбрать'}
+      </span>
       <input
         className="hidden"
         type="file"
         accept=".xyz,chemical/x-xyz,text/plain"
-        onChange={(e) => onFile(e.target.files?.[0] ?? null)}
+        onChange={(e) => onFile(pickXyz(e.target.files))}
       />
     </label>
   )

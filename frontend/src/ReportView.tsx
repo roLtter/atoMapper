@@ -59,17 +59,25 @@ function extractSummary(sections: Section[]): Summary {
 }
 
 const SECTION_HINT: Record<string, string> = {
-  parse: 'Состав и число атомов. Формулы reactant/product должны совпасть.',
-  bonds: 'Сколько связей нашли по геометрии до маппинга.',
+  parse: 'Состав и число атомов. Формулы реагента и продукта должны совпасть.',
+  bonds: 'Сколько связей нашли по геометрии до сопоставления.',
   normalize: 'Как подготовили позы для модели (на выход NEB это не влияет).',
-  selection: 'Как выбрали mapping: LLM, проверки, fallback, метрики.',
+  selection: 'Как выбрали соответствие атомов: модель, проверки, запасной алгоритм, метрики.',
+}
+
+const SECTION_TITLE: Record<string, string> = {
+  parse: 'Разбор',
+  bonds: 'Связи',
+  normalize: 'Нормализация',
+  selection: 'Выбор соответствия',
 }
 
 function SectionCard({ section }: { section: Section }) {
   const hint = SECTION_HINT[section.key]
+  const title = SECTION_TITLE[section.key] ?? section.title
   return (
     <article className="rounded-xl border border-[var(--line)] bg-white/80 p-4">
-      <h3 className="text-sm font-semibold tracking-wide text-[var(--accent)] uppercase">{section.title}</h3>
+      <h3 className="text-sm font-semibold tracking-wide text-[var(--accent)] uppercase">{title}</h3>
       {hint && <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p>}
       <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-[var(--ink)]">
         {section.lines.map((line, i) => (
@@ -105,7 +113,7 @@ export function ReportView({ report }: { report: string }) {
           onClick={copyRaw}
           className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm font-medium hover:bg-[var(--accent-soft)]"
         >
-          {copied ? 'Скопировано' : 'Copy raw report'}
+          {copied ? 'Скопировано' : 'Копировать сырой отчёт'}
         </button>
       </div>
 
@@ -115,13 +123,13 @@ export function ReportView({ report }: { report: string }) {
         <SummaryItem label="RMSD" value={summary.rmsd ?? '—'} mono emphasize />
         <SummaryItem label="Источник" value={summary.accepted ?? summary.method ?? '—'} />
         <SummaryItem
-          label="Mapping"
+          label="Соответствие атомов"
           value={summary.mapping ?? '—'}
           mono
           className="sm:col-span-2"
         />
-        <SummaryItem label="Broken bonds" value={summary.broken ?? '[]'} mono className="sm:col-span-1" warn />
-        <SummaryItem label="Formed bonds" value={summary.formed ?? '[]'} mono className="sm:col-span-1" warn />
+        <SummaryItem label="Разорванные связи" value={summary.broken ?? '[]'} mono className="sm:col-span-1" warn />
+        <SummaryItem label="Образованные связи" value={summary.formed ?? '[]'} mono className="sm:col-span-1" warn />
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">

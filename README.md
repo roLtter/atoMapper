@@ -22,15 +22,13 @@
 
 Секретов в репо нет. Скопируй `.env.example` в `.env`.
 
-Подробнее про коммиты, Bonsai и fallback: [NOTES.md](NOTES.md).
-
 ## Ollama (локально)
 
 Нужен Ollama >= 0.40.6. На 12 GB VRAM держи `num_ctx=8192`.
 
 ```powershell
 ollama create bonsai-mapper -f ops/Modelfile.bonsai-mapper
-# или FROM на свой GGUF, см. NOTES.md
+# или FROM на путь к своему .gguf
 ```
 
 В `.env`: `LLM_PROVIDER=ollama`, `LLM_MODEL=bonsai-mapper`.

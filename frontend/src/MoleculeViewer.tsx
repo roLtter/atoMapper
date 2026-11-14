@@ -146,7 +146,7 @@ export function MoleculeViewer({ title, xyz }: Props) {
           onClick={resetView}
           className="rounded-md border border-[var(--line)] bg-white px-2 py-0.5 text-xs font-medium text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
         >
-          reset
+          сброс
         </button>
       </div>
       <div className="relative h-72 w-full overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)]">
