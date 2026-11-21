@@ -1,62 +1,64 @@
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from mapper.bonds import assign_bonds
-from mapper.candidates import generate_candidates
 from mapper.llm import LLMConfig, LLMProvider, RESPONSE_SCHEMA, make_llm_provider
-from mapper.metrics import CandidateMetrics, evaluate_candidate
+from mapper.metrics import CandidateMetrics
 from mapper.molecule import Molecule
 from mapper.normalize import normalize_molecule
 from mapper.output import MappingResult, aligned_product
-from mapper.prompt import SYSTEM_PROMPT, build_repair_prompt, build_user_prompt
+from mapper.prompt import (
+    MANUAL_CHAT_PROMPT,
+    SYSTEM_PROMPT,
+    build_repair_prompt,
+    build_user_prompt,
+)
 from mapper.verifier import verify_llm_mapping
-from mapper.xyz import assert_same_composition, parse_xyz
+from mapper.xyz import assert_same_composition, parse_xyz, write_xyz
 
-def _load(source: str | Path | bytes | Molecule, charge: int, multiplicity: int) -> Molecule:
+
+def _load(source: str | Path | bytes | Molecule) -> Molecule:
     if isinstance(source, Molecule):
-        mol = source.copy()
-        mol.charge = charge
-        mol.multiplicity = multiplicity
-        return mol
-    return parse_xyz(source, charge=charge, multiplicity=multiplicity)
+        return source.copy()
+    return parse_xyz(source)
 
-def _algo_best(reactant: Molecule, product: Molecule) -> CandidateMetrics:
-    cands = generate_candidates(reactant, product, top_k=8)
-    if not cands:
-        raise ValueError("algorithmic fallback produced no candidates")
-    ranked = sorted(
-        (evaluate_candidate(reactant, product, m) for m in cands),
-        key=lambda c: (c.n_bond_changes, c.rmsd, c.max_displacement),
+
+def _finish(
+    reactant: Molecule,
+    product: Molecule,
+    mapping: list[int],
+    metrics: CandidateMetrics,
+    report: list[str],
+    out_dir: str | Path | None,
+) -> MappingResult:
+    product_mapped = aligned_product(reactant, product.reorder(mapping))
+    result = MappingResult(
+        reactant=reactant,
+        product_mapped=product_mapped,
+        mapping=mapping,
+        metrics=metrics,
+        candidates=[metrics],
+        report_lines=report,
     )
-    return ranked[0]
+    if out_dir is not None:
+        result.write(out_dir)
+    return result
 
-def _score(m: CandidateMetrics) -> tuple[int, float, float]:
-    return (m.n_bond_changes, m.rmsd, m.max_displacement)
-
-def _llm_worse_than_algo(llm: CandidateMetrics, algo: CandidateMetrics) -> bool:
-    if llm.n_bond_changes > algo.n_bond_changes + 1:
-        return True
-    if llm.n_bond_changes >= algo.n_bond_changes and llm.rmsd > algo.rmsd + 0.25:
-        return True
-    return _score(llm) > _score(algo)
 
 def map_atoms(
     reactant_src: str | Path | bytes | Molecule,
     product_src: str | Path | bytes | Molecule,
     *,
-    charge: int = 0,
-    multiplicity: int = 1,
-    top_k: int = 5,
     out_dir: str | Path | None = None,
-    use_llm: bool = True,
     llm: LLMProvider | None = None,
 ) -> MappingResult:
-    del top_k
     report: list[str] = ["# atom-mapper report", ""]
 
-    reactant = _load(reactant_src, charge, multiplicity)
-    product = _load(product_src, charge, multiplicity)
+    reactant = _load(reactant_src)
+    product = _load(product_src)
     report.append("## parse")
     report.append(f"- reactant atoms: {reactant.n_atoms}, formula: {reactant.formula()}")
     report.append(f"- product atoms: {product.n_atoms}, formula: {product.formula()}")
@@ -76,57 +78,27 @@ def map_atoms(
     report.append("- centered + principal-axis orientation for LLM input")
     report.append("- original geometries kept for NEB output / Kabsch")
 
-    algo = _algo_best(reactant, product)
-    report.append("")
-    report.append("## selection")
-
-    if not use_llm:
-        report.append("- method: algorithmic (no LLM)")
-        report.append(
-            f"- chosen mapping: {algo.mapping}"
-        )
-        report.append(
-            f"- metrics: rmsd={algo.rmsd:.4f} broken={algo.broken_bonds} formed={algo.formed_bonds}"
-        )
-        product_mapped = aligned_product(reactant, product.reorder(algo.mapping))
-        result = MappingResult(
-            reactant=reactant,
-            product_mapped=product_mapped,
-            mapping=algo.mapping,
-            metrics=algo,
-            candidates=[algo],
-            report_lines=report,
-        )
-        if out_dir is not None:
-            result.write(out_dir)
-        return result
-
     cfg = LLMConfig.from_env()
     provider = llm or make_llm_provider(cfg)
+    report.append("")
+    report.append("## selection")
     report.append(f"- method: LLM ({cfg.provider}/{cfg.model})")
-    report.append(
-        f"- algo baseline: mapping={algo.mapping} "
-        f"rmsd={algo.rmsd:.4f} bond_changes={algo.n_bond_changes}"
-    )
-
-    compact_prompt = cfg.provider in {"ollama", "local"} or cfg.model.lower().endswith(":free")
-    local_soft = cfg.provider in {"ollama", "local"}
-    max_attempts = 3 if local_soft else 2
 
     answer: dict = {}
     mapping: list[int] = []
-    llm_metrics: CandidateMetrics | None = None
     last_reason = ""
+    max_attempts = max(2, cfg.max_retries)
+    verified = None
     for attempt in range(max_attempts):
         if attempt == 0:
-            user = build_user_prompt(reactant_view, product_view, compact=compact_prompt)
+            user = build_user_prompt(reactant_view, product_view, compact=False)
         else:
             user = build_repair_prompt(
                 reactant_view,
                 product_view,
                 bad_mapping=mapping,
                 reason=last_reason,
-                compact=compact_prompt,
+                compact=False,
             )
             report.append(f"- retry {attempt}: feeding verifier error back to LLM")
 
@@ -140,57 +112,144 @@ def map_atoms(
         report.append(f"- llm raw (attempt {attempt + 1}): {answer}")
         mapping = [int(x) for x in answer["mapping"]]
         verified = verify_llm_mapping(reactant, product, mapping)
-        if not verified.ok or verified.metrics is None:
-            last_reason = verified.reason
-            report.append(f"- verifier rejected: {last_reason}")
-            continue
+        if verified.ok and verified.metrics is not None:
+            break
+        last_reason = verified.reason
+        report.append(f"- verifier rejected: {last_reason}")
 
-        if _llm_worse_than_algo(verified.metrics, algo):
-            report.append(
-                f"- quality gate rejected: llm bc={verified.metrics.n_bond_changes} "
-                f"rmsd={verified.metrics.rmsd:.3f} vs algo bc={algo.n_bond_changes} "
-                f"rmsd={algo.rmsd:.3f}"
-            )
-            last_reason = "chemically poor mapping"
-            llm_metrics = verified.metrics
-            continue
+    if verified is None or not verified.ok or verified.metrics is None:
+        raise ValueError(f"LLM mapping rejected: {last_reason or 'unknown'}")
 
-        llm_metrics = verified.metrics
-        break
-
-    used_fallback = False
-    if llm_metrics is None or _llm_worse_than_algo(llm_metrics, algo):
-        report.append("- selecting algorithmic baseline (LLM missing or worse)")
-        best = algo
-        used_fallback = True
-    else:
-        best = llm_metrics
-        if _score(algo) < _score(best):
-            report.append("- algo slightly better; preferring algorithmic mapping")
-            best = algo
-            used_fallback = True
-
-    if used_fallback:
-        report.append("- verifier: accepted algorithmic mapping")
-    else:
-        report.append("- verifier: accepted LLM (bijection + element + quality vs algo)")
+    best = verified.metrics
+    report.append("- verifier: accepted LLM (bijection + element match)")
     for step in answer.get("reasoning_steps", [])[:12]:
         report.append(f"- llm: {step}")
-
     report.append(f"- chosen mapping: {best.mapping}")
     report.append(
         f"- metrics: rmsd={best.rmsd:.4f} broken={best.broken_bonds} formed={best.formed_bonds}"
     )
+    return _finish(reactant, product, best.mapping, best, report, out_dir)
 
-    product_mapped = aligned_product(reactant, product.reorder(best.mapping))
-    result = MappingResult(
-        reactant=reactant,
-        product_mapped=product_mapped,
-        mapping=best.mapping,
-        metrics=best,
-        candidates=[best, algo] if best.mapping != algo.mapping else [best],
+
+@dataclass
+class ManualPrepResult:
+    reactant_norm: Molecule
+    product_norm: Molecule
+    prompt: str
+    report_lines: list[str]
+
+    def write(self, out_dir: str | Path) -> dict[str, Path]:
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        paths = {
+            "reactant_norm.xyz": out / "reactant_norm.xyz",
+            "product_norm.xyz": out / "product_norm.xyz",
+            "prompt.txt": out / "prompt.txt",
+            "report.md": out / "report.md",
+        }
+        paths["reactant_norm.xyz"].write_text(
+            write_xyz(self.reactant_norm, "reactant normalized"), encoding="utf-8"
+        )
+        paths["product_norm.xyz"].write_text(
+            write_xyz(self.product_norm, "product normalized"), encoding="utf-8"
+        )
+        paths["prompt.txt"].write_text(self.prompt, encoding="utf-8")
+        paths["report.md"].write_text("\n".join(self.report_lines) + "\n", encoding="utf-8")
+        return paths
+
+
+def prepare_manual(
+    reactant_src: str | Path | bytes | Molecule,
+    product_src: str | Path | bytes | Molecule,
+    *,
+    out_dir: str | Path | None = None,
+) -> ManualPrepResult:
+    report = ["# atom-mapper report", "", "## parse"]
+    reactant = _load(reactant_src)
+    product = _load(product_src)
+    report.append(f"- reactant atoms: {reactant.n_atoms}, formula: {reactant.formula()}")
+    report.append(f"- product atoms: {product.n_atoms}, formula: {product.formula()}")
+    assert_same_composition(reactant, product)
+
+    reactant = assign_bonds(reactant)
+    product = assign_bonds(product)
+    report.append("")
+    report.append("## bonds")
+    report.append(f"- reactant bonds: {len(reactant.bonds)}")
+    report.append(f"- product bonds: {len(product.bonds)}")
+
+    reactant_norm = normalize_molecule(reactant)
+    product_norm = normalize_molecule(product)
+    report.append("")
+    report.append("## normalize")
+    report.append("- method: manual prep (normalize only, no mapping)")
+    report.append("- download reactant_norm.xyz, product_norm.xyz, prompt.txt")
+    report.append("- send them to your chat model, then upload the 3 result files here")
+
+    result = ManualPrepResult(
+        reactant_norm=reactant_norm,
+        product_norm=product_norm,
+        prompt=MANUAL_CHAT_PROMPT.strip() + "\n",
         report_lines=report,
     )
     if out_dir is not None:
         result.write(out_dir)
     return result
+
+
+def report_from_mapping_files(
+    reactant_src: str | Path | bytes | Molecule,
+    product_src: str | Path | bytes | Molecule,
+    mapping_src: str | Path | bytes | dict,
+    *,
+    out_dir: str | Path | None = None,
+) -> MappingResult:
+    report = ["# atom-mapper report", "", "## parse"]
+    reactant = _load(reactant_src)
+    product = _load(product_src)
+    report.append(f"- reactant atoms: {reactant.n_atoms}, formula: {reactant.formula()}")
+    report.append(f"- product atoms: {product.n_atoms}, formula: {product.formula()}")
+    assert_same_composition(reactant, product)
+
+    if isinstance(mapping_src, dict):
+        payload = mapping_src
+    elif isinstance(mapping_src, bytes):
+        payload = json.loads(mapping_src.decode("utf-8"))
+    else:
+        path = Path(mapping_src)
+        text = path.read_text(encoding="utf-8") if path.exists() else str(mapping_src)
+        payload = json.loads(text)
+
+    reported = [int(x) for x in payload["mapping"]]
+    report.append("")
+    report.append("## selection")
+    report.append("- method: manual import (user-provided mapping.json + mapped xyz)")
+    report.append(f"- mapping.json: {reported}")
+
+    reactant = assign_bonds(reactant)
+    product = assign_bonds(product)
+
+    identity = list(range(reactant.n_atoms))
+    verified = verify_llm_mapping(reactant, product, identity)
+    apply_map = identity
+    if verified.ok and verified.metrics is not None:
+        report.append("- product xyz looks already remapped; evaluating identity order")
+    else:
+        verified = verify_llm_mapping(reactant, product, reported)
+        apply_map = reported
+        if not verified.ok or verified.metrics is None:
+            raise ValueError(f"imported mapping rejected: {verified.reason}")
+        report.append("- applied mapping.json to product xyz")
+
+    best = verified.metrics
+    assert best is not None
+    report.append("- verifier: accepted (bijection + element match)")
+    report.append(f"- chosen mapping: {reported}")
+    report.append(
+        f"- metrics: rmsd={best.rmsd:.4f} broken={best.broken_bonds} formed={best.formed_bonds}"
+    )
+    finished = _finish(reactant, product, apply_map, best, report, None)
+    finished.mapping = reported
+    if out_dir is not None:
+        finished.write(out_dir)
+    return finished

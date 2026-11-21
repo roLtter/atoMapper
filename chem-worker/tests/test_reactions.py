@@ -8,7 +8,7 @@ from tests.helpers import oracle_llm
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_reaction_mapping_recovers_heavy_atoms(name: str):
     reactant, product, true = CASES[name]()
-    result = map_atoms(reactant, product, charge=reactant.charge, llm=oracle_llm(true))
+    result = map_atoms(reactant, product, llm=oracle_llm(true))
     assert sorted(result.mapping) == list(range(reactant.n_atoms))
     for i, sym in enumerate(reactant.symbols):
         if sym == "H":
@@ -27,7 +27,7 @@ def test_proton_transfer_bond_change_pattern():
 
 def test_sn2_swaps_halogen_bonds():
     reactant, product, true = CASES["sn2"]()
-    result = map_atoms(reactant, product, charge=-1, llm=oracle_llm(true))
+    result = map_atoms(reactant, product, llm=oracle_llm(true))
     assert result.mapping[0] == true[0]
     assert result.mapping[4] == true[4]
     assert result.mapping[5] == true[5]

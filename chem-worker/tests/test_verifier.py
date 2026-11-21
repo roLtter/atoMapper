@@ -1,8 +1,10 @@
+import numpy as np
+import pytest
+
 from mapper.llm import extract_json_object, strip_think
 from mapper.pipeline import map_atoms
 from mapper.verifier import verify_llm_mapping
 from tests.helpers import FakeLLM, mol_from_smiles, oracle_llm, scramble
-import numpy as np
 
 
 def test_strip_think_and_json():
@@ -26,7 +28,7 @@ def test_verifier_rejects_element_mismatch():
     assert result.ok is False
 
 
-def test_pipeline_falls_back_on_bad_mapping():
+def test_pipeline_rejects_bad_mapping():
     mol = mol_from_smiles("CO", seed=4)
     product, _true = scramble(mol, np.random.default_rng(5))
     c_idx = mol.symbols.index("C")
@@ -41,14 +43,13 @@ def test_pipeline_falls_back_on_bad_mapping():
             "reasoning_steps": ["wrong on purpose"],
         }
     )
-    result = map_atoms(mol, product, use_llm=True, llm=fake)
-    assert verify_llm_mapping(mol, product, result.mapping).ok
-    assert any("algorithmic" in line for line in result.report_lines)
+    with pytest.raises(ValueError, match="LLM mapping rejected"):
+        map_atoms(mol, product, llm=fake)
 
 
 def test_pipeline_llm_accepts_good_mapping():
     mol = mol_from_smiles("CO", seed=6)
     product, true = scramble(mol, np.random.default_rng(7))
-    result = map_atoms(mol, product, use_llm=True, llm=oracle_llm(true))
+    result = map_atoms(mol, product, llm=oracle_llm(true))
     assert result.mapping == true
     assert any("accepted" in line for line in result.report_lines)
