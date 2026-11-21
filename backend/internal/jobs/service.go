@@ -28,10 +28,11 @@ const (
 )
 
 type Job struct {
-	ID        string `json:"job_id"`
-	Status    Status `json:"status"`
-	Step      string `json:"step"`
-	Error     string `json:"error,omitempty"`
+	ID        string    `json:"job_id"`
+	Status    Status    `json:"status"`
+	Step      string    `json:"step"`
+	Error     string    `json:"error,omitempty"`
+	Kind      string    `json:"kind,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -68,19 +69,12 @@ func NewService(cfg Config) (*Service, error) {
 	return s, nil
 }
 
-func (s *Service) CreateJob(reactant, product []byte, charge, multiplicity int, model string, useLLM bool) (*Job, error) {
-	if int64(len(reactant)) > s.cfg.MaxUploadBytes || int64(len(product)) > s.cfg.MaxUploadBytes {
-		return nil, fmt.Errorf("file too large")
-	}
-	if err := validateXYZAtomCount(reactant, s.cfg.MaxAtoms); err != nil {
+func (s *Service) CreateMapJob(reactant, product []byte, model string) (*Job, error) {
+	if err := s.validatePair(reactant, product); err != nil {
 		return nil, err
 	}
-	if err := validateXYZAtomCount(product, s.cfg.MaxAtoms); err != nil {
-		return nil, err
-	}
-
 	id := uuid.NewString()
-	job := &Job{ID: id, Status: StatusQueued, Step: "queued", CreatedAt: time.Now().UTC()}
+	job := &Job{ID: id, Status: StatusQueued, Step: "queued", Kind: "map", CreatedAt: time.Now().UTC()}
 	dir := filepath.Join(s.cfg.DataDir, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -91,19 +85,71 @@ func (s *Service) CreateJob(reactant, product []byte, charge, multiplicity int, 
 	if err := os.WriteFile(filepath.Join(dir, "product.xyz"), product, 0o644); err != nil {
 		return nil, err
 	}
-	meta := map[string]any{
-		"charge":       charge,
-		"multiplicity": multiplicity,
-		"model":        model,
-		"use_llm":      useLLM,
-	}
+	meta := map[string]any{"model": model, "kind": "map"}
 	b, _ := json.Marshal(meta)
 	_ = os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
-
 	if err := s.saveJob(job); err != nil {
 		return nil, err
 	}
-	go s.run(id, reactant, product, charge, multiplicity, model, useLLM)
+	go s.runMap(id, reactant, product, model)
+	return job, nil
+}
+
+func (s *Service) CreateNormalizeJob(reactant, product []byte) (*Job, error) {
+	if err := s.validatePair(reactant, product); err != nil {
+		return nil, err
+	}
+	id := uuid.NewString()
+	job := &Job{ID: id, Status: StatusQueued, Step: "queued", Kind: "normalize", CreatedAt: time.Now().UTC()}
+	dir := filepath.Join(s.cfg.DataDir, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "reactant.xyz"), reactant, 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "product.xyz"), product, 0o644); err != nil {
+		return nil, err
+	}
+	meta := map[string]any{"kind": "normalize"}
+	b, _ := json.Marshal(meta)
+	_ = os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
+	if err := s.saveJob(job); err != nil {
+		return nil, err
+	}
+	go s.runNormalize(id, reactant, product)
+	return job, nil
+}
+
+func (s *Service) CreateFromMappingJob(reactant, product, mapping []byte) (*Job, error) {
+	if err := s.validatePair(reactant, product); err != nil {
+		return nil, err
+	}
+	if int64(len(mapping)) > s.cfg.MaxUploadBytes {
+		return nil, fmt.Errorf("file too large")
+	}
+	id := uuid.NewString()
+	job := &Job{ID: id, Status: StatusQueued, Step: "queued", Kind: "from-mapping", CreatedAt: time.Now().UTC()}
+	dir := filepath.Join(s.cfg.DataDir, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "reactant.xyz"), reactant, 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "product.xyz"), product, 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mapping_in.json"), mapping, 0o644); err != nil {
+		return nil, err
+	}
+	meta := map[string]any{"kind": "from-mapping"}
+	b, _ := json.Marshal(meta)
+	_ = os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
+	if err := s.saveJob(job); err != nil {
+		return nil, err
+	}
+	go s.runFromMapping(id, reactant, product, mapping)
 	return job, nil
 }
 
@@ -111,10 +157,31 @@ func (s *Service) GetJob(id string) (*Job, error) {
 	return s.loadJob(id)
 }
 
+func (s *Service) LLMStatus() (map[string]any, error) {
+	url := strings.TrimRight(s.cfg.ChemWorkerURL, "/") + "/llm"
+	resp, err := s.client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s", string(body))
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Service) OpenFile(id, name string) (string, error) {
 	allowed := map[string]bool{
 		"reactant_mapped.xyz": true,
 		"product_mapped.xyz":  true,
+		"reactant_norm.xyz":   true,
+		"product_norm.xyz":    true,
+		"prompt.txt":          true,
 		"mapping.json":        true,
 		"report.md":           true,
 	}
@@ -128,30 +195,63 @@ func (s *Service) OpenFile(id, name string) (string, error) {
 	return path, nil
 }
 
-func (s *Service) run(id string, reactant, product []byte, charge, multiplicity int, model string, useLLM bool) {
+func (s *Service) validatePair(reactant, product []byte) error {
+	if int64(len(reactant)) > s.cfg.MaxUploadBytes || int64(len(product)) > s.cfg.MaxUploadBytes {
+		return fmt.Errorf("file too large")
+	}
+	if err := validateXYZAtomCount(reactant, s.cfg.MaxAtoms); err != nil {
+		return err
+	}
+	return validateXYZAtomCount(product, s.cfg.MaxAtoms)
+}
+
+func (s *Service) runMap(id string, reactant, product []byte, model string) {
 	_ = s.update(id, StatusRunning, "chem-worker", "")
 	body := &bytes.Buffer{}
 	w := multipart.NewWriter(body)
 	_ = writeFileField(w, "reactant", "reactant.xyz", reactant)
 	_ = writeFileField(w, "product", "product.xyz", product)
-	_ = w.WriteField("charge", fmt.Sprintf("%d", charge))
-	_ = w.WriteField("multiplicity", fmt.Sprintf("%d", multiplicity))
-	if useLLM {
-		_ = w.WriteField("use_llm", "true")
-	} else {
-		_ = w.WriteField("use_llm", "false")
-	}
 	if model != "" {
 		_ = w.WriteField("model", model)
 	}
 	_ = w.Close()
+	s.finishWorkerCall(id, "/map", body, w.FormDataContentType(), []string{
+		"reactant_mapped.xyz", "product_mapped.xyz", "mapping.json", "report.md",
+	})
+}
 
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.cfg.ChemWorkerURL, "/")+"/map", body)
+func (s *Service) runNormalize(id string, reactant, product []byte) {
+	_ = s.update(id, StatusRunning, "chem-worker", "")
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	_ = writeFileField(w, "reactant", "reactant.xyz", reactant)
+	_ = writeFileField(w, "product", "product.xyz", product)
+	_ = w.Close()
+	s.finishWorkerCall(id, "/normalize", body, w.FormDataContentType(), []string{
+		"reactant_norm.xyz", "product_norm.xyz", "prompt.txt", "report.md",
+	})
+}
+
+func (s *Service) runFromMapping(id string, reactant, product, mapping []byte) {
+	_ = s.update(id, StatusRunning, "chem-worker", "")
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	_ = writeFileField(w, "reactant", "reactant_mapped.xyz", reactant)
+	_ = writeFileField(w, "product", "product_mapped.xyz", product)
+	_ = writeFileField(w, "mapping", "mapping.json", mapping)
+	_ = w.Close()
+	s.finishWorkerCall(id, "/from-mapping", body, w.FormDataContentType(), []string{
+		"reactant_mapped.xyz", "product_mapped.xyz", "mapping.json", "report.md",
+	})
+}
+
+func (s *Service) finishWorkerCall(id, path string, body *bytes.Buffer, contentType string, files []string) {
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.cfg.ChemWorkerURL, "/")+path, body)
 	if err != nil {
 		_ = s.update(id, StatusFailed, "error", err.Error())
 		return
 	}
-	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		_ = s.update(id, StatusFailed, "error", err.Error())
@@ -172,7 +272,6 @@ func (s *Service) run(id string, reactant, product []byte, charge, multiplicity 
 		return
 	}
 
-	files := []string{"reactant_mapped.xyz", "product_mapped.xyz", "mapping.json", "report.md"}
 	for _, name := range files {
 		dest := filepath.Join(s.cfg.DataDir, id, name)
 		if err := s.fetchWorkerFile(mapped.JobID, name, dest); err != nil {
