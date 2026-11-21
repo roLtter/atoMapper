@@ -66,9 +66,6 @@ export function MoleculeViewer({ title, xyz }: Props) {
 
       hostRef.current.innerHTML = ''
       const el = hostRef.current
-      el.style.width = '100%'
-      el.style.height = '100%'
-      el.style.position = 'relative'
 
       viewer = $3Dmol.createViewer(el, {
         backgroundColor: '#f8fafc',
@@ -144,19 +141,19 @@ export function MoleculeViewer({ title, xyz }: Props) {
         <button
           type="button"
           onClick={resetView}
-          className="rounded-md border border-[var(--line)] bg-white px-2 py-0.5 text-xs font-medium text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+          className="rounded-md border border-line bg-white px-2 py-0.5 text-xs font-medium text-muted hover:border-accent hover:text-accent"
         >
           сброс
         </button>
       </div>
-      <div className="relative h-72 w-full overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)]">
-        <div ref={hostRef} className="absolute inset-0" />
+      <div className="relative h-72 w-full overflow-hidden rounded-xl border border-line bg-panel">
+        <div ref={hostRef} className="absolute inset-0 h-full w-full" />
       </div>
-      <p className="min-h-5 text-sm text-[var(--muted)]">
+      <p className="min-h-5 text-sm text-muted">
         {selected ? (
           <>
-            Атом <span className="font-medium text-[var(--ink)]">{selected.elem}</span> · номер в файле{' '}
-            <span className="font-medium text-[var(--ink)]">{selected.index}</span>
+            Атом <span className="font-medium text-ink">{selected.elem}</span> · номер в файле{' '}
+            <span className="font-medium text-ink">{selected.index}</span>
           </>
         ) : (
           'Кликните по атому, чтобы увидеть элемент и номер'

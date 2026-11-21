@@ -1,32 +1,32 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: light;
-  --bg: #eef2f7;
-  --ink: #0f172a;
-  --muted: #64748b;
-  --line: #cbd5e1;
-  --panel: #f8fafc;
-  --accent: #0284c7;
-  --accent-ink: #f0f9ff;
-  --accent-soft: #e0f2fe;
-  --ok: #0e7490;
-  --warn: #b45309;
-  --serif: "Fraunces", Georgia, serif;
-  --sans: "Manrope", "Segoe UI", sans-serif;
+@theme {
+  --color-bg: #eef2f7;
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-line: #cbd5e1;
+  --color-panel: #f8fafc;
+  --color-accent: #0284c7;
+  --color-accent-ink: #f0f9ff;
+  --color-accent-soft: #e0f2fe;
+  --color-ok: #0e7490;
+  --color-warn: #b45309;
+  --font-serif: "Fraunces", Georgia, serif;
+  --font-sans: "Manrope", "Segoe UI", sans-serif;
 }
 
-body {
-  margin: 0;
-  min-height: 100vh;
-  font-family: var(--sans);
-  color: var(--ink);
-  background:
-    radial-gradient(ellipse 80% 50% at 0% 0%, #bae6fd 0%, transparent 55%),
-    radial-gradient(ellipse 60% 40% at 100% 10%, #e0f2fe 0%, transparent 50%),
-    linear-gradient(180deg, #f1f5f9 0%, var(--bg) 40%, #e2e8f0 100%);
-}
+@layer base {
+  html,
+  body,
+  #root {
+    @apply min-h-screen;
+  }
 
-#root {
-  min-height: 100vh;
+  body {
+    @apply m-0 font-sans text-ink;
+    background:
+      radial-gradient(ellipse 80% 50% at 0% 0%, #bae6fd 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 10%, #e0f2fe 0%, transparent 50%),
+      linear-gradient(180deg, #f1f5f9 0%, var(--color-bg) 40%, #e2e8f0 100%);
+  }
 }
