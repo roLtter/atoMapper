@@ -6,13 +6,13 @@
 
 ### 1. Облако (polza.ai)
 
-Нужен `POLZA_API_KEY`. Загружаете два XYZ → mapping через `openai/gpt-5.6-sol` → `reactant_mapped.xyz`, `product_mapped.xyz`, `mapping.json`, `report.md` + 3D.
+Нужен `POLZA_API_KEY`. Загружаются два XYZ → mapping через `polza.ai` → `reactant_mapped.xyz`, `product_mapped.xyz`, `mapping.json`, `report.md` + 3D.
 
 ### 2. Ручной
 
-1. **Подготовка** — локально только нормализация (центр + главные оси). Скачиваете `reactant_norm.xyz`, `product_norm.xyz`, `prompt.txt`.
+1. **Подготовка** — локально только нормализация (центр + главные оси). После подготовки доступно скачивание `reactant_norm.xyz`, `product_norm.xyz`, `prompt.txt`.
 2. Отправляете их в свой чат GPT.
-3. **Импорт** — загружаете `reactant_mapped.xyz`, `product_mapped.xyz`, `mapping.json` → отчёт + 3D.
+3. **Импорт** — загружаете полученные файлы `reactant_mapped.xyz`, `product_mapped.xyz`, `mapping.json` → визуализация подробного отчёта + 3D.
 
 ## Архитектура
 
@@ -27,7 +27,6 @@ backend (Go / Gin)  ──jobs──►  chem-worker (FastAPI / RDKit)
                                    └─ /from-mapping import mapped files
 ```
 
-Опционально: Redis (статус jobs), MinIO (артефакты).
 
 | Часть | Стек |
 |-------|------|
@@ -40,7 +39,8 @@ backend (Go / Gin)  ──jobs──►  chem-worker (FastAPI / RDKit)
 
 ```powershell
 copy .env.example .env
-# задайте POLZA_API_KEY=
+# задать POLZA_API_KEY=
+# задать LLM_MODEL=
 
 python -m venv .venv
 .\.venv\Scripts\pip install -e ".\chem-worker[dev,api]"
