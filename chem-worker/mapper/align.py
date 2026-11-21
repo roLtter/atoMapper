@@ -5,7 +5,6 @@ from scipy.optimize import linear_sum_assignment
 
 
 def kabsch(P: np.ndarray, Q: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
-    """Rotate/translate Q onto P. Returns R, t, rmsd with Q @ R.T + t ≈ P."""
     if len(P) == 0:
         return np.eye(3), np.zeros(3), 0.0
     Pc = P.mean(axis=0)
@@ -33,9 +32,6 @@ def hungarian_by_element(
     mov_coords: np.ndarray,
     indices: list[int] | None = None,
 ) -> list[int]:
-    """Map mov indices -> ref indices within element classes. Returns mapping mov_idx -> ref_idx for all atoms if indices is None.
-    Actually returns full mapping array M where M[ref_i] = mov_j (which mov atom sits at reactant slot i).
-    """
     n = len(symbols)
     if indices is None:
         indices = list(range(n))

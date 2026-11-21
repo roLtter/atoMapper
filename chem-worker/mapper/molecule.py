@@ -43,7 +43,6 @@ class Molecule:
         )
 
     def reorder(self, mapping: list[int]) -> Molecule:
-        """mapping[i] = index in self that becomes new atom i (product->reactant order)."""
         symbols = [self.symbols[j] for j in mapping]
         coords = self.coords[np.asarray(mapping, dtype=int)]
         inv = {old: new for new, old in enumerate(mapping)}
