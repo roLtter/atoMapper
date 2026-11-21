@@ -1,72 +1,91 @@
-# atom-mapper
+# atoMapper
 
-Готовит геометрии к NEB в ORCA. На вход: `reactant.xyz` и `product.xyz`
-(один состав, разный порядок атомов, продукт может быть повёрнут или сдвинут).
-На выход: два `.xyz` с одной нумерацией и короткий report.
+Готовит пары `reactant.xyz` / `product.xyz` к NEB в ORCA: одна нумерация атомов, отчёт по связям, 3D-превью.
 
-Без общей нумерации NEB тянет «не те» атомы друг к другу.
+## Режимы
 
-Позы только нормализуются (центр + главные оси). Сам mapping делает LLM
-(по умолчанию локальный Bonsai через Ollama). Дальше проверка биекции/элементов,
-сравнение с алгоритмическим baseline и Kabsch.
+### 1. Облако (polza.ai)
 
-## Стек
+Нужен `POLZA_API_KEY`. Загружаете два XYZ → mapping через `openai/gpt-5.6-sol` → `reactant_mapped.xyz`, `product_mapped.xyz`, `mapping.json`, `report.md` + 3D.
 
-| Часть | Что |
-|-------|-----|
-| `backend/` | Go, Gin |
-| `chem-worker/` | Python, FastAPI, RDKit, numpy |
-| `frontend/` | React, TypeScript, Tailwind |
-| Инфра | Redis, MinIO, docker compose |
-| LLM | Ollama (`bonsai-mapper`) или OpenRouter |
+### 2. Ручной
 
-Секретов в репо нет. Скопируй `.env.example` в `.env`.
+1. **Подготовка** — локально только нормализация (центр + главные оси). Скачиваете `reactant_norm.xyz`, `product_norm.xyz`, `prompt.txt`.
+2. Отправляете их в свой чат GPT.
+3. **Импорт** — загружаете `reactant_mapped.xyz`, `product_mapped.xyz`, `mapping.json` → отчёт + 3D.
 
-## Ollama (локально)
+## Архитектура
 
-Нужен Ollama >= 0.40.6. На 12 GB VRAM держи `num_ctx=8192`.
-
-```powershell
-ollama create bonsai-mapper -f ops/Modelfile.bonsai-mapper
-# или FROM на путь к своему .gguf
+```
+frontend (React + Tailwind + Vite)
+    │  /api/*
+    ▼
+backend (Go / Gin)  ──jobs──►  chem-worker (FastAPI / RDKit)
+                                   │
+                                   ├─ /map          polza.ai mapping
+                                   ├─ /normalize    manual prep
+                                   └─ /from-mapping import mapped files
 ```
 
-В `.env`: `LLM_PROVIDER=ollama`, `LLM_MODEL=bonsai-mapper`.
+Опционально: Redis (статус jobs), MinIO (артефакты).
 
-## Локальная разработка
+| Часть | Стек |
+|-------|------|
+| `frontend/` | React, TypeScript, Tailwind v4, 3Dmol |
+| `backend/` | Go, Gin |
+| `chem-worker/` | Python, FastAPI, RDKit, numpy |
+| LLM | только polza.ai (`POLZA_API_KEY`) |
 
-```bash
+## Быстрый старт
+
+```powershell
+copy .env.example .env
+# задайте POLZA_API_KEY=
+
 python -m venv .venv
 .\.venv\Scripts\pip install -e ".\chem-worker[dev,api]"
 
-.\.venv\Scripts\python -m pytest chem-worker/tests
-.\.venv\Scripts\python -m mapper
+.\.venv\Scripts\python -m uvicorn mapper.api:app --app-dir chem-worker --host 127.0.0.1 --port 8000
 
 cd backend
 go run ./cmd/server
 
-cd ../frontend
+cd ..\frontend
 npm install
 npm run dev
 ```
 
-Без сервисов:
+UI: `http://127.0.0.1:5173` · API: `:8080` · worker: `:8000`
 
-```bash
-cd chem-worker
-python -c "from mapper import map_atoms; map_atoms('a.xyz','b.xyz', out_dir='out')"
+## API
+
+| Метод | Путь | Назначение |
+|-------|------|------------|
+| POST | `/api/jobs` | облачный mapping (`reactant`, `product`) |
+| POST | `/api/jobs/normalize` | ручная подготовка |
+| POST | `/api/jobs/from-mapping` | импорт (`reactant`, `product`, `mapping`) |
+| GET | `/api/jobs/:id` | статус |
+| GET | `/api/jobs/:id/files/:name` | артефакты |
+| GET | `/api/llm` | модель / ключ polza |
+
+## Тесты
+
+```powershell
+.\.venv\Scripts\python -m pytest chem-worker/tests -q
 ```
 
 ## Docker
 
-```bash
+Базовый стек (frontend + api + chem-worker), без Redis/MinIO:
+
+```powershell
 docker compose up --build
 ```
 
-UI `http://localhost:3000`, API `http://localhost:8080`, chem-worker `http://localhost:8000`.
+UI: http://localhost:3000
 
-## API
+Redis/MinIO опционально (если Docker Hub доступен):
 
-- `POST /api/jobs` multipart: `reactant`, `product`, опционально `charge`, `multiplicity`, `model`, `use_llm`
-- `GET /api/jobs/:id`
-- `GET /api/jobs/:id/files/...` (`reactant_mapped.xyz`, `product_mapped.xyz`, `mapping.json`, `report.md`)
+```powershell
+docker compose --profile extras up --build
+```

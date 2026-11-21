@@ -1,5 +1,6 @@
 *.md
 !README.md
+!RELEASE_NOTES*.md
 
 context/
 
